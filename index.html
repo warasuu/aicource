@@ -1,0 +1,481 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+
+  <title>音声入力テスト</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont,
+                   "Helvetica Neue", sans-serif;
+      background: #f5f6f8;
+      color: #222;
+    }
+
+    .container {
+      max-width: 520px;
+      margin: auto;
+      padding: 22px;
+      background: white;
+      border-radius: 14px;
+      box-shadow: 0 2px 12px #00000012;
+    }
+
+    h1 {
+      font-size: 22px;
+      margin: 0 0 12px;
+    }
+
+    .description {
+      font-size: 14px;
+      color: #555;
+      line-height: 1.7;
+    }
+
+    .status {
+      margin: 20px 0;
+      padding: 12px;
+      background: #eef2f7;
+      border-radius: 8px;
+      text-align: center;
+      font-weight: bold;
+    }
+
+    button {
+      display: block;
+      width: 100%;
+      padding: 16px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 9px;
+      font-size: 17px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    #startBtn {
+      background: #1769d2;
+      color: white;
+    }
+
+    #stopBtn {
+      background: #e5e7eb;
+      color: #222;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    h2 {
+      margin-top: 28px;
+      font-size: 16px;
+    }
+
+    .result {
+      min-height: 100px;
+      padding: 14px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 18px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .info {
+      font-size: 13px;
+      line-height: 1.8;
+      overflow-wrap: anywhere;
+    }
+
+    .log {
+      min-height: 110px;
+      max-height: 240px;
+      overflow-y: auto;
+      padding: 12px;
+      border-radius: 8px;
+      background: #1f2937;
+      color: #e5e7eb;
+      font-size: 12px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .error {
+      color: #b42318;
+    }
+  </style>
+</head>
+
+<body>
+  <main class="container">
+
+    <h1>音声入力テスト</h1>
+
+    <p class="description">
+      GASのWebアプリで、日本語の音声認識が
+      利用できるか確認します。
+      「開始」を押して話してください。
+    </p>
+
+    <div id="status" class="status"
+         role="status" aria-live="polite">
+      初期化中
+    </div>
+
+    <button id="startBtn" disabled>
+      🎤 音声入力を開始
+    </button>
+
+    <button id="stopBtn" disabled>
+      ■ 音声入力を停止
+    </button>
+
+    <h2>認識された文字</h2>
+
+    <div id="result" class="result"
+         aria-live="polite">
+      ここに認識結果が表示されます。
+    </div>
+
+    <h2>動作環境</h2>
+
+    <div class="info">
+      <div id="browser"></div>
+      <div id="api"></div>
+      <div id="secure"></div>
+      <div id="frame"></div>
+      <div id="permission"></div>
+    </div>
+
+    <h2>動作ログ・エラー情報</h2>
+
+    <div id="log" class="log"
+         role="log" aria-live="polite"></div>
+
+  </main>
+
+  <script>
+    'use strict';
+
+    const startBtn =
+      document.getElementById('startBtn');
+
+    const stopBtn =
+      document.getElementById('stopBtn');
+
+    const statusEl =
+      document.getElementById('status');
+
+    const resultEl =
+      document.getElementById('result');
+
+    const logEl =
+      document.getElementById('log');
+
+    const Recognition =
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition;
+
+    let recognition = null;
+    let active = false;
+    let errorOccurred = false;
+    let finalText = '';
+
+    // 動作ログ
+    function log(message) {
+      const time = new Date()
+        .toLocaleTimeString('ja-JP');
+
+      logEl.textContent +=
+        '[' + time + '] ' + message + '\n';
+
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // 状態表示
+    function setStatus(message, isError = false) {
+      statusEl.textContent = message;
+      statusEl.classList.toggle('error', isError);
+    }
+
+    // ボタンの有効・無効を切り替える
+    function setActive(value) {
+      active = value;
+      startBtn.disabled = value || !Recognition;
+      stopBtn.disabled = !value;
+    }
+
+    // ブラウザ情報
+    function detectBrowser() {
+      const ua = navigator.userAgent;
+
+      if (/CriOS/i.test(ua)) {
+        return 'iOS Chrome';
+      }
+
+      if (/FxiOS/i.test(ua)) {
+        return 'iOS Firefox';
+      }
+
+      if (/iPhone|iPad|iPod/i.test(ua)) {
+        return 'iOS Safari またはその他';
+      }
+
+      if (/Edg\//i.test(ua)) {
+        return 'Microsoft Edge';
+      }
+
+      if (/Chrome\//i.test(ua)) {
+        return 'Google Chrome';
+      }
+
+      if (/Safari\//i.test(ua)) {
+        return 'Safari';
+      }
+
+      return '判定できません';
+    }
+
+    // 初期診断
+    function initialize() {
+      document.getElementById('browser')
+        .textContent =
+        'ブラウザ：' + detectBrowser();
+
+      document.getElementById('secure')
+        .textContent =
+        '安全な接続：' +
+        (window.isSecureContext ? 'はい' : 'いいえ');
+
+      let framed = false;
+
+      try {
+        framed = window.self !== window.top;
+      } catch (e) {
+        framed = true;
+      }
+
+      document.getElementById('frame')
+        .textContent =
+        'iframe内：' + (framed ? 'はい' : 'いいえ');
+
+      if (!Recognition) {
+        document.getElementById('api')
+          .textContent =
+          '音声認識API：検出できません';
+
+        setStatus('音声認識APIが利用できません', true);
+        log('SpeechRecognition API未検出');
+        return;
+      }
+
+      document.getElementById('api')
+        .textContent =
+        '音声認識API：検出しました';
+
+      log('SpeechRecognition API検出');
+
+      try {
+        recognition = new Recognition();
+
+        recognition.lang = 'ja-JP';
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+
+        setupRecognitionEvents();
+
+        setStatus('待機中');
+        setActive(false);
+
+        log('初期化完了');
+      } catch (e) {
+        setStatus('初期化エラー', true);
+        log('初期化エラー：' + e.message);
+        startBtn.disabled = true;
+      }
+
+      // マイク権限を参照できる場合だけ表示
+      if (
+        navigator.permissions &&
+        navigator.permissions.query
+      ) {
+        navigator.permissions.query({
+          name: 'microphone'
+        }).then(function(permission) {
+          document.getElementById('permission')
+            .textContent =
+            'マイク権限：' + permission.state;
+        }).catch(function() {
+          document.getElementById('permission')
+            .textContent =
+            'マイク権限：取得できません';
+        });
+      } else {
+        document.getElementById('permission')
+          .textContent =
+          'マイク権限：判定API非対応';
+      }
+    }
+
+    // 音声認識イベントを設定
+    function setupRecognitionEvents() {
+
+      recognition.onstart = function() {
+        setActive(true);
+        setStatus('音声認識を開始しました');
+        log('認識開始');
+      };
+
+      recognition.onaudiostart = function() {
+        log('音声入力処理開始');
+      };
+
+      recognition.onspeechstart = function() {
+        setStatus('音声を検出しました');
+        log('発話検出');
+      };
+
+      recognition.onresult = function(event) {
+        let interimText = '';
+
+        for (
+          let i = event.resultIndex;
+          i < event.results.length;
+          i++
+        ) {
+          const text =
+            event.results[i][0].transcript;
+
+          if (event.results[i].isFinal) {
+            finalText += text;
+            log('認識確定：' + text);
+          } else {
+            interimText += text;
+          }
+        }
+
+        resultEl.textContent =
+          finalText + interimText;
+      };
+
+      recognition.onerror = function(event) {
+        errorOccurred = true;
+
+        const errorName = event.error || 'unknown';
+        const message = event.message || '';
+
+        setStatus(
+          'エラー：' + errorName,
+          true
+        );
+
+        log(
+          'エラーコード：' + errorName +
+          (message ? ' / ' + message : '')
+        );
+
+        if (errorName === 'not-allowed') {
+          log('マイク権限または実行環境の制限の可能性');
+        }
+
+        if (errorName === 'service-not-allowed') {
+          log('音声認識サービスの利用が拒否されました');
+        }
+
+        if (errorName === 'audio-capture') {
+          log('マイクを利用できません');
+        }
+
+        if (errorName === 'no-speech') {
+          log('音声が検出されませんでした');
+        }
+
+        if (errorName === 'network') {
+          log('音声認識サービスとの通信エラー');
+        }
+      };
+
+      recognition.onend = function() {
+        setActive(false);
+        log('認識終了');
+
+        if (!errorOccurred) {
+          if (finalText.trim()) {
+            setStatus('認識終了・結果取得済み');
+          } else {
+            setStatus('認識終了・結果なし');
+          }
+        }
+      };
+    }
+
+    // 開始ボタン
+    startBtn.addEventListener('click', function() {
+      if (!recognition || active) {
+        return;
+      }
+
+      finalText = '';
+      errorOccurred = false;
+      resultEl.textContent = '';
+
+      log('開始ボタンを押しました');
+
+      // 二重起動を防止
+      setActive(true);
+      setStatus('開始要求中');
+
+      try {
+        recognition.start();
+      } catch (e) {
+        setActive(false);
+        errorOccurred = true;
+
+        setStatus('開始できませんでした', true);
+        log(
+          '開始エラー：' +
+          e.name + ' / ' + e.message
+        );
+      }
+    });
+
+    // 停止ボタン
+    stopBtn.addEventListener('click', function() {
+      if (!recognition || !active) {
+        return;
+      }
+
+      log('停止ボタンを押しました');
+
+      try {
+        recognition.stop();
+        setStatus('停止処理中');
+        stopBtn.disabled = true;
+      } catch (e) {
+        log('停止エラー：' + e.message);
+      }
+    });
+
+    // 初期化実行
+    initialize();
+
+  </script>
+</body>
+</html>
