@@ -2,62 +2,104 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>音声入力・再開検証 v3</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>音声入力 起動診断 v4</title>
 <style>
-:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f5f7fa;color:#162235}main{max-width:680px;margin:auto;padding:20px 14px 36px}h1{font-size:1.33rem}p{line-height:1.55}.panel{background:white;border-radius:14px;padding:15px;margin:12px 0;box-shadow:0 1px 4px #0001}.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}button{min-height:48px;border:0;border-radius:9px;font-size:1rem;font-weight:700;background:#1666c0;color:white}button.stop{background:#a63731}button.secondary{background:#526176}button:disabled{opacity:.45}textarea{width:100%;min-height:115px;padding:10px;font:inherit;border-radius:8px;border:1px solid #aeb7c3}.status{font-weight:700}.muted{color:#526176;font-size:.89rem}.log{font:12px/1.5 ui-monospace,SFMono-Regular,monospace;white-space:pre-wrap;max-height:240px;overflow:auto;background:#f1f4f8;padding:10px;border-radius:8px}select{font:inherit;padding:7px;border:1px solid #9aabba;border-radius:8px;width:100%;background:white}label{display:block;margin-bottom:6px}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f6f8;color:#1e293b;margin:0;padding:16px;line-height:1.5}main{max-width:640px;margin:auto}h1{font-size:1.4em}.panel{background:white;border-radius:12px;margin:12px 0;padding:14px}button{padding:12px 10px;border-radius:8px;border:0;background:#175db2;color:white;font-size:16px;margin:3px 2px;min-height:48px}button:disabled{background:#96a3b4}#status{font-weight:bold}#log{white-space:pre-wrap;overflow-wrap:anywhere;background:#edf1f5;border-radius:7px;padding:10px;min-height:90px;font-size:13px}textarea{width:100%;box-sizing:border-box;height:110px;font:inherit}.muted{color:#566578;font-size:.93em}
 </style>
 </head>
 <body><main>
-<h1>音声入力・再開検証 v3</h1>
-<p class="muted">Safari / Chromeの通常画面またはホーム画面から開いて確認します。まず「停止方式：通常停止」のまま、開始→発話→停止→再開を試してください。</p>
-<section class="panel">
-<label for="stopMode"><strong>停止方式</strong></label>
-<select id="stopMode"><option value="stop">通常停止 stop()：結果の確定を試みる（最初はこちら）</option><option value="abort">即時中断 abort()：途中結果の確定を保証しない</option></select>
-<p>状態：<span id="status" class="status" role="status" aria-live="polite">待機中（未開始）</span></p>
-<p class="muted">認識セッション：<span id="session">0</span>回目　／　最後の受信：<span id="lastEvent">なし</span></p>
-<div class="actions"><button id="start">音声入力開始</button><button id="stop" class="stop" disabled>音声入力停止</button></div>
-<p class="muted">終了通知が来なかった場合、画面上だけ「停止完了」とは扱わず、問題を表示します。</p>
-</section>
-<section class="panel"><label for="output"><strong>認識結果（編集可能）</strong></label><textarea id="output" placeholder="認識された言葉がここに表示されます"></textarea></section>
-<section class="panel"><strong>診断ログ</strong><div id="log" class="log" aria-live="polite"></div><div class="actions" style="margin-top:10px"><button id="copy" class="secondary">ログをコピー</button><button id="reload" class="secondary">ページを再読み込み</button></div></section>
-<section class="panel"><strong>確認すること</strong><p class="muted">①1回目に認識できるか ②停止後マイク表示が消えるか ③2回目も「onaudiostart」「onresult」が出て認識できるか。2回目に反応しない場合はログをコピーしてください。iPhone上部のマイク表示はWebページから直接制御できません。</p></section>
+<h1>音声入力 起動診断 v4</h1>
+<p class="muted">最初に「JavaScript起動済み」と表示されるか確認します。</p>
+<div class="panel"><div>起動チェック：<strong id="boot">HTML表示のみ（JavaScript未確認）</strong></div><div>音声認識の状態：<span id="status">未初期化</span></div></div>
+<div class="panel"><button id="start" disabled>音声入力開始</button><button id="stop" disabled>音声入力停止</button><p>認識内容</p><textarea id="result" placeholder="音声認識の結果"></textarea></div>
+<div class="panel"><strong>診断ログ</strong><div id="log">JavaScriptの開始待ち</div><button id="copy">ログを選択する</button><button id="reload" onclick="location.reload()">再読込</button></div>
 </main>
 <script>
-(()=>{
-'use strict';
-const API=window.SpeechRecognition||window.webkitSpeechRecognition;
-const $=id=>document.getElementById(id);
-const startButton=$('start'),stopButton=$('stop'),status=$('status'),output=$('output'),logBox=$('log');
-let recognition=null,state='idle',endWatch=null,startWatch=null,cooldown=null,session=0,finalText='',endedCleanly=true;
-function log(s){const line=new Date().toLocaleTimeString('ja-J')+' '+s;logBox.textContent+=(logBox.textContent?'\n':'')+line;logBox.scrollTop=logBox.scrollHeight;$('lastEvent').textContent=s.slice(0,60);}
-function clearTimers(){for(const t of [endWatch,startWatch,cooldown])if(t!==null)clearTimeout(t);endWatch=startWatch=cooldown=null;}
-function paint(message){status.textContent=message;startButton.disabled=state!=='idle'||!endedCleanly;stopButton.disabled=!(state==='starting'||state==='listening');$('stopMode').disabled=state!=='idle';}
-function resetWithEnd(r,reason){if(recognition!==r)return;clearTimers();recognition=null;endedCleanly=true;state='cooldown';paint(reason+'（再開準備中）');log(reason+' / onend 確認');cooldown=setTimeout(()=>{if(state==='cooldown'){state='idle';paint('待機中：再開できます');log('再開可能としてボタン有効化');}},1200);}
-function failWithoutEnd(r){if(recognition!==r)return;clearTimers();endedCleanly=false;state='blocked';paint('終了通知なし：再読み込みして再試行');log('⚠ onend が届かず、内部状態は不明。安全のため再開禁止。');}
-function begin(){
- if(!API||state!=='idle'||!endedCleanly)return;
- clearTimers();session++;$('session').textContent=String(session);finalText=output.value.trim();
- const r=new API();recognition=r;r.lang='ja-JP';r.continuous=false;r.interimResults=true;
- r.onstart=()=>{if(recognition!==r)return;log('onstart (#'+session+')');if(state==='starting'){state='listening';paint('音声入力中');}};
- r.onaudiostart=()=>{if(recognition===r)log('onaudiostart: マイク音声取得開始');};
- r.onaudioend=()=>{if(recognition===r)log('onaudioend: マイク音声取得終了');};
- r.onspeechstart=()=>{if(recognition===r)log('onspeechstart: 発話検出');};
- r.onspeechend=()=>{if(recognition===r)log('onspeechend: 発話終了');};
- r.onresult=e=>{if(recognition!==r)return;let completed='',interim='';for(let i=e.resultIndex;i<e.results.length;i++){const item=e.results[i];if(item.isFinal)completed+=item[0].transcript;else interim+=item[0].transcript;}if(completed)finalText+=(finalText?'\n':'')+completed;output.value=finalText+(interim?(finalText?'\n':'')+interim:'');log('onresult: '+(completed||interim).slice(0,75));};
- r.onerror=e=>{if(recognition!==r)return;log('onerror: '+e.error);if(state==='starting'||state==='listening'){state='stopping';paint('終了待ち（エラー '+e.error+'）');watchEnd(r);}};
- r.onend=()=>resetWithEnd(r,'認識終了');
- state='starting';paint('開始処理中');log('start() 呼び出し (#'+session+')');
- try{r.start();}catch(e){log('start() 例外: '+e.message);recognition=null;state='idle';paint('開始エラー: '+e.message);return;}
- startWatch=setTimeout(()=>{if(recognition===r&&(state==='starting'||state==='listening')){log('⚠ 開始後8秒: 応答確認。音声が入らないなら停止してください');status.textContent='応答待機中：声を出して確認';}},8000);
-}
-function watchEnd(r){if(endWatch!==null)clearTimeout(endWatch);endWatch=setTimeout(()=>{if(recognition!==r)return;log('終了通知が5秒間届きません');try{r.abort();log('追加で abort() を1回実行');}catch(e){log('abort() 例外: '+e.message);}endWatch=setTimeout(()=>failWithoutEnd(r),2500);},5000);}
-function stop(){const r=recognition;if(!r||(state!=='starting'&&state!=='listening'))return;state='stopping';paint('停止処理中：終了通知待ち');const m=$('stopMode').value;log(m==='stop'?'stop() 呼び出し':'abort() 呼び出し');try{if(m==='stop')r.stop();else r.abort();}catch(e){log('停止例外: '+e.message);}watchEnd(r);}
-startButton.addEventListener('click',begin);stopButton.addEventListener('click',stop);
-$('reload').addEventListener('click',()=>location.reload());
-$('copy').addEventListener('click',async()=>{const value=logBox.textContent;try{await navigator.clipboard.writeText(value);log('ログをコピーしました');}catch(e){const ta=document.createElement('textarea');ta.value=value;document.body.appendChild(ta);ta.select();const success=document.execCommand('copy');ta.remove();log(success?'ログをコピーしました':'コピーできませんでした：ログを選択して送信してください');}});
-window.addEventListener('pagehide',()=>{clearTimers();if(recognition){try{recognition.abort();}catch(e){}recognition=null;}});
-if(!API){endedCleanly=false;paint('このブラウザは音声認識に非対応');log('SpeechRecognition APIがありません');}else{paint('待機中（未開始）');log('準備完了 / '+navigator.userAgent);}
+/* Separate tiny boot script, intentionally ES5-only. */
+(function(){
+  var boot=document.getElementById('boot');
+  var logs=document.getElementById('log');
+  boot.textContent='JavaScript起動済み';
+  logs.textContent='起動チェック：成功';
+  window.addEventListener('error',function(e){
+    logs.textContent+='\nJavaScriptエラー: '+(e.message||'不明')+' / '+(e.filename||'')+':'+(e.lineno||'');
+    document.getElementById('status').textContent='JavaScriptエラー';
+  });
+  window.addEventListener('unhandledrejection',function(e){logs.textContent+='\nPromiseエラー: '+String(e.reason||'不明');});
 })();
 </script>
-</body></html>
+<script>
+(function(){
+  'use strict';
+  var boot=document.getElementById('boot');
+  var status=document.getElementById('status');
+  var logs=document.getElementById('log');
+  var start=document.getElementById('start');
+  var stop=document.getElementById('stop');
+  var output=document.getElementById('result');
+  var API=window.SpeechRecognition||window.webkitSpeechRecognition;
+  var recognition=null, running=false, sequence=0, previous='';
+  function add(message){
+    var time=new Date().toLocaleTimeString('ja-JP');
+    logs.textContent+='\n'+time+' '+message;
+  }
+  function setState(text){status.textContent=text;}
+  if(!API){
+    boot.textContent='初期化完了（音声認識APIなし）';
+    setState('音声認識APIに非対応');
+    add('SpeechRecognition が見つかりません');
+    return;
+  }
+  boot.textContent='初期化完了';
+  setState('待機中：開始できます');
+  start.disabled=false;
+  add('準備完了 / '+navigator.userAgent);
+  start.addEventListener('click',function(){
+    if(running)return;
+    sequence+=1;
+    add('start() 呼び出し #'+sequence);
+    var instance=new API();
+    recognition=instance;
+    running=true;
+    start.disabled=true;
+    stop.disabled=false;
+    previous=output.value;
+    instance.lang='ja-JP';
+    instance.continuous=false;
+    instance.interimResults=true;
+    setState('開始処理中');
+    instance.onstart=function(){add('onstart');setState('音声認識中');};
+    instance.onaudiostart=function(){add('onaudiostart');};
+    instance.onaudioend=function(){add('onaudioend');};
+    instance.onresult=function(event){
+      var transcript='';
+      for(var i=0;i<event.results.length;i++){transcript+=event.results[i][0].transcript;}
+      output.value=previous+(previous?'\n':'')+transcript;
+      add('onresult: '+transcript.slice(0,60));
+    };
+    instance.onerror=function(e){add('onerror: '+e.error);setState('エラー: '+e.error);};
+    instance.onend=function(){
+      add('onend: 終了通知');
+      if(recognition===instance){recognition=null;running=false;start.disabled=false;stop.disabled=true;setState('待機中：再開できます');}
+    };
+    try{instance.start();}catch(e){add('start() 例外: '+e.message);setState('開始失敗');recognition=null;running=false;start.disabled=false;stop.disabled=true;}
+  });
+  stop.addEventListener('click',function(){
+    if(!recognition)return;
+    add('stop() 呼び出し');
+    setState('停止処理中：onend待ち');
+    stop.disabled=true;
+    try{recognition.stop();}catch(e){add('stop() 例外: '+e.message);}
+  });
+  document.getElementById('copy').addEventListener('click',function(){
+    var selection=window.getSelection();
+    var range=document.createRange();
+    range.selectNodeContents(logs);selection.removeAllRanges();selection.addRange(range);
+    add('ログを選択しました。必要ならコピーしてください');
+  });
+  window.addEventListener('pagehide',function(){if(recognition){try{recognition.abort();}catch(e){}}});
+})();
+</script>
+</body>
+</html>
